@@ -159,7 +159,7 @@ func (c internalConn) LogValue() slog.Value {
 }
 
 type dialerFactory interface {
-	New(config.OptionsConfiguration, *tls.Config, *registry.Registry, *lanChecker) genericDialer
+	New(config.OptionsConfiguration, *tls.Config, *registry.Registry, *lanChecker, tailscaleTransport) genericDialer
 	AlwaysWAN() bool
 	Valid(config.Configuration) error
 	String() string
@@ -198,8 +198,15 @@ type genericDialer interface {
 }
 
 type listenerFactory interface {
-	New(*url.URL, config.Wrapper, *tls.Config, chan internalConn, *nat.Service, *registry.Registry, *lanChecker) genericListener
+	New(*url.URL, config.Wrapper, *tls.Config, chan internalConn, *nat.Service, *registry.Registry, *lanChecker, tailscaleTransport) genericListener
 	Valid(config.Configuration) error
+}
+
+type tailscaleTransport interface {
+	Enabled() bool
+	Dial(context.Context, string, string) (net.Conn, error)
+	Listen(string, string) (net.Listener, error)
+	AdvertiseURLs(string, int) []*url.URL
 }
 
 type ListenerAddresses struct {

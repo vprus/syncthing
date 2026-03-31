@@ -179,7 +179,7 @@ func (*relayListener) NATType() string {
 
 type relayListenerFactory struct{}
 
-func (f *relayListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, _ *nat.Service, _ *registry.Registry, _ *lanChecker) genericListener {
+func (f *relayListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, _ *nat.Service, _ *registry.Registry, _ *lanChecker, _ tailscaleTransport) genericListener {
 	t := &relayListener{
 		uri:     uri,
 		cfg:     cfg,
@@ -192,7 +192,7 @@ func (f *relayListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls
 }
 
 func (relayListenerFactory) Valid(cfg config.Configuration) error {
-	if !cfg.Options.RelaysEnabled {
+	if !cfg.Options.RelayTransportEnabled() {
 		return errDisabled
 	}
 	return nil

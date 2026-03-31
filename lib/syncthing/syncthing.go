@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
+	"github.com/syncthing/syncthing/lib/tailscaleutil"
 	"github.com/syncthing/syncthing/lib/tlsutil"
 	"github.com/syncthing/syncthing/lib/upgrade"
 	"github.com/syncthing/syncthing/lib/ur"
@@ -275,11 +277,13 @@ func (a *App) startup() error {
 	addrLister := &lateAddressLister{}
 
 	connRegistry := registry.New()
+	tailscaleService := tailscaleutil.New(a.cfg, filepath.Join(locations.GetBaseDir(locations.ConfigBaseDir), "tailscale"))
 	discoveryManager := discover.NewManager(a.myID, a.cfg, a.cert, a.evLogger, addrLister, connRegistry)
-	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
+	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen, tailscaleService)
 
 	addrLister.AddressLister = connectionsService
 
+	a.mainService.Add(svcutil.AsService(tailscaleService.Serve, "tailscale"))
 	a.mainService.Add(discoveryManager)
 	a.mainService.Add(connectionsService)
 

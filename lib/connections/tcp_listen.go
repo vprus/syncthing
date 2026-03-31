@@ -42,6 +42,7 @@ type tcpListener struct {
 	factory    listenerFactory
 	registry   *registry.Registry
 	lanChecker *lanChecker
+	tailscale  tailscaleTransport
 
 	natService *nat.Service
 	mapping    *nat.Mapping
@@ -51,107 +52,151 @@ type tcpListener struct {
 }
 
 func (t *tcpListener) serve(ctx context.Context) error {
-	tcaddr, err := net.ResolveTCPAddr(t.uri.Scheme, t.uri.Host)
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
-		return err
-	}
+	var (
+		tcaddr   *net.TCPAddr
+		listener net.Listener
+		err      error
+	)
 
-	lc := net.ListenConfig{
-		Control: dialer.ReusePortControl,
-	}
-
-	listener, err := lc.Listen(context.TODO(), t.uri.Scheme, tcaddr.String())
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
-		return err
+	if t.tailscale != nil && t.tailscale.Enabled() {
+		// In Tailscale mode, only the port is meaningful. Parse the URI
+		// without DNS resolution and warn if a non-TCP scheme or a specific
+		// bind address is configured — Tailscale manages its own addressing.
+		var host, portStr string
+		host, portStr, err = net.SplitHostPort(t.uri.Host)
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
+			return err
+		}
+		if t.uri.Scheme != "tcp" {
+			slog.WarnContext(ctx, "Tailscale listener: ignoring non-TCP scheme, using tcp", slog.String("scheme", t.uri.Scheme))
+		}
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			slog.WarnContext(ctx, "Tailscale listener: ignoring configured bind address, Tailscale manages addressing", slog.String("host", host))
+		}
+		listener, err = t.tailscale.Listen("tcp", net.JoinHostPort("0.0.0.0", portStr))
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
+			return err
+		}
+	} else {
+		tcaddr, err = net.ResolveTCPAddr(t.uri.Scheme, t.uri.Host)
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
+			return err
+		}
+		lc := net.ListenConfig{
+			Control: dialer.ReusePortControl,
+		}
+		listener, err = lc.Listen(context.TODO(), t.uri.Scheme, tcaddr.String())
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
+			return err
+		}
 	}
 	defer listener.Close()
 
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
 	// We might bind to :0, so use the port we've been given.
-	tcaddr = listener.Addr().(*net.TCPAddr)
+	if addr, ok := listener.Addr().(*net.TCPAddr); ok {
+		tcaddr = addr
+	} else if addr, err := net.ResolveTCPAddr("tcp", listener.Addr().String()); err == nil {
+		tcaddr = addr
+	}
 
 	t.notifyAddressesChanged(t)
 	defer t.clearAddresses(t)
 
-	t.registry.Register(t.uri.Scheme, tcaddr)
-	defer t.registry.Unregister(t.uri.Scheme, tcaddr)
+	if t.tailscale == nil || !t.tailscale.Enabled() {
+		t.registry.Register(t.uri.Scheme, tcaddr)
+		defer t.registry.Unregister(t.uri.Scheme, tcaddr)
+	}
 
 	slog.InfoContext(ctx, "TCP listener starting", slogutil.Address(tcaddr))
 	defer slog.InfoContext(ctx, "TCP listener shutting down", slogutil.Address(tcaddr))
 
-	var ipVersion nat.IPVersion
-	switch t.uri.Scheme {
-	case "tcp4":
-		ipVersion = nat.IPv4Only
-	case "tcp6":
-		ipVersion = nat.IPv6Only
-	default:
-		ipVersion = nat.IPvAny
-	}
-	mapping := t.natService.NewMapping(nat.TCP, ipVersion, tcaddr.IP, tcaddr.Port)
-	mapping.OnChanged(func() {
-		t.notifyAddressesChanged(t)
-	})
-	// Should be called after t.mapping is nil'ed out.
-	defer t.natService.RemoveMapping(mapping)
-
 	t.mut.Lock()
-	t.mapping = mapping
 	t.laddr = tcaddr
 	t.mut.Unlock()
 	defer func() {
 		t.mut.Lock()
-		t.mapping = nil
 		t.laddr = nil
 		t.mut.Unlock()
 	}()
 
+	if t.tailscale == nil || !t.tailscale.Enabled() {
+		var ipVersion nat.IPVersion
+		switch t.uri.Scheme {
+		case "tcp4":
+			ipVersion = nat.IPv4Only
+		case "tcp6":
+			ipVersion = nat.IPv6Only
+		default:
+			ipVersion = nat.IPvAny
+		}
+		mapping := t.natService.NewMapping(nat.TCP, ipVersion, tcaddr.IP, tcaddr.Port)
+		mapping.OnChanged(func() {
+			t.notifyAddressesChanged(t)
+		})
+		// Should be called after t.mapping is nil'ed out.
+		defer t.natService.RemoveMapping(mapping)
+
+		t.mut.Lock()
+		t.mapping = mapping
+		t.mut.Unlock()
+		defer func() {
+			t.mut.Lock()
+			t.mapping = nil
+			t.mut.Unlock()
+		}()
+	}
+
 	acceptFailures := 0
 	const maxAcceptFailures = 10
 
-	// :(, but what can you do.
-	tcpListener := listener.(*net.TCPListener)
-
 	for {
-		_ = tcpListener.SetDeadline(time.Now().Add(time.Second))
-		conn, err := tcpListener.Accept()
-		select {
-		case <-ctx.Done():
+		conn, err := listener.Accept()
+		if ctx.Err() != nil {
 			if err == nil {
 				conn.Close()
 			}
 			return nil
-		default:
 		}
 		if err != nil {
-			var ne *net.OpError
-			if ok := errors.As(err, &ne); !ok || !ne.Timeout() {
-				slog.WarnContext(ctx, "Failed to accept TCP connection", slogutil.Error(err))
-
-				acceptFailures++
-				if acceptFailures > maxAcceptFailures {
-					// Return to restart the listener, because something
-					// seems permanently damaged.
-					return err
-				}
-
-				// Slightly increased delay for each failure.
-				time.Sleep(time.Duration(acceptFailures) * time.Second)
+			if errors.Is(err, net.ErrClosed) && ctx.Err() != nil {
+				return nil
 			}
+
+			slog.WarnContext(ctx, "Failed to accept TCP connection", slogutil.Error(err))
+
+			acceptFailures++
+			if acceptFailures > maxAcceptFailures {
+				// Return to restart the listener, because something
+				// seems permanently damaged.
+				return err
+			}
+
+			// Slightly increased delay for each failure.
+			time.Sleep(time.Duration(acceptFailures) * time.Second)
 			continue
 		}
 
 		acceptFailures = 0
 		l.Debugln("Listen (BEP/tcp): connect from", conn.RemoteAddr())
 
-		if err := dialer.SetTCPOptions(conn); err != nil {
-			l.Debugln("Listen (BEP/tcp): setting tcp options:", err)
-		}
+		if t.tailscale == nil || !t.tailscale.Enabled() {
+			if err := dialer.SetTCPOptions(conn); err != nil {
+				l.Debugln("Listen (BEP/tcp): setting tcp options:", err)
+			}
 
-		if tc := t.cfg.Options().TrafficClass; tc != 0 {
-			if err := dialer.SetTrafficClass(conn, tc); err != nil {
-				l.Debugln("Listen (BEP/tcp): setting traffic class:", err)
+			if tc := t.cfg.Options().TrafficClass; tc != 0 {
+				if err := dialer.SetTrafficClass(conn, tc); err != nil {
+					l.Debugln("Listen (BEP/tcp): setting traffic class:", err)
+				}
 			}
 		}
 
@@ -177,12 +222,19 @@ func (t *tcpListener) URI() *url.URL {
 
 func (t *tcpListener) WANAddresses() []*url.URL {
 	t.mut.RLock()
-	uris := []*url.URL{
-		maybeReplacePort(t.uri, t.laddr),
+	uri := maybeReplacePort(t.uri, t.laddr)
+	if t.tailscale != nil && t.tailscale.Enabled() {
+		t.mut.RUnlock()
+		if port, ok := uriPort(uri); ok {
+			if uris := t.tailscale.AdvertiseURLs(uri.Scheme, port); len(uris) > 0 {
+				return uris
+			}
+		}
+		return []*url.URL{uri}
 	}
 
+	uris := []*url.URL{uri}
 	uris = append(uris, portMappingURIs(t.mapping, *t.uri)...)
-
 	t.mut.RUnlock()
 
 	// If we support ReusePort, add an unspecified zero port address, which will be resolved by the discovery server
@@ -198,6 +250,15 @@ func (t *tcpListener) WANAddresses() []*url.URL {
 func (t *tcpListener) LANAddresses() []*url.URL {
 	t.mut.RLock()
 	uri := maybeReplacePort(t.uri, t.laddr)
+	if t.tailscale != nil && t.tailscale.Enabled() {
+		t.mut.RUnlock()
+		if port, ok := uriPort(uri); ok {
+			if uris := t.tailscale.AdvertiseURLs(uri.Scheme, port); len(uris) > 0 {
+				return uris
+			}
+		}
+		return []*url.URL{uri}
+	}
 	t.mut.RUnlock()
 	addrs := []*url.URL{uri}
 	addrs = append(addrs, getURLsForAllAdaptersIfUnspecified(uri.Scheme, uri)...)
@@ -218,7 +279,7 @@ func (*tcpListener) NATType() string {
 
 type tcpListenerFactory struct{}
 
-func (f *tcpListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, natService *nat.Service, registry *registry.Registry, lanChecker *lanChecker) genericListener {
+func (f *tcpListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, natService *nat.Service, registry *registry.Registry, lanChecker *lanChecker, tailscale tailscaleTransport) genericListener {
 	l := &tcpListener{
 		uri:        fixupPort(uri, config.DefaultTCPPort),
 		cfg:        cfg,
@@ -228,6 +289,7 @@ func (f *tcpListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.C
 		factory:    f,
 		registry:   registry,
 		lanChecker: lanChecker,
+		tailscale:  tailscale,
 	}
 	l.ServiceWithError = svcutil.AsService(l.serve, l.String())
 	return l

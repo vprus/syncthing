@@ -31,6 +31,10 @@ type OptionsConfiguration struct {
 	ReconnectIntervalS          int      `json:"reconnectionIntervalS" xml:"reconnectionIntervalS" default:"20"`
 	RelaysEnabled               bool     `json:"relaysEnabled" xml:"relaysEnabled" default:"true"`
 	RelayReconnectIntervalM     int      `json:"relayReconnectIntervalM" xml:"relayReconnectIntervalM" default:"10"`
+	TailscaleEnabled            bool     `json:"tailscaleEnabled" xml:"tailscaleEnabled" default:"true" restart:"true"`
+	TailscaleHostname           string   `json:"tailscaleHostname" xml:"tailscaleHostname" restart:"true"`
+	TailscaleStateDir           string   `json:"tailscaleStateDir" xml:"tailscaleStateDir" restart:"true"`
+	TailscaleControlURL         string   `json:"tailscaleControlURL" xml:"tailscaleControlURL" restart:"true"`
 	StartBrowser                bool     `json:"startBrowser" xml:"startBrowser" default:"true"`
 	NATEnabled                  bool     `json:"natEnabled" xml:"natEnabled" default:"true"`
 	NATLeaseM                   int      `json:"natLeaseMinutes" xml:"natLeaseMinutes" default:"60"`
@@ -160,8 +164,24 @@ func (opts OptionsConfiguration) RequiresRestartOnly() OptionsConfiguration {
 	return optsCopy
 }
 
+func (opts OptionsConfiguration) LocalDiscoveryEnabled() bool {
+	return opts.LocalAnnEnabled && !opts.TailscaleEnabled
+}
+
+func (opts OptionsConfiguration) GlobalDiscoveryEnabled() bool {
+	return opts.GlobalAnnEnabled
+}
+
+func (opts OptionsConfiguration) RelayTransportEnabled() bool {
+	return opts.RelaysEnabled && !opts.TailscaleEnabled
+}
+
+func (opts OptionsConfiguration) NATTraversalEnabled() bool {
+	return opts.NATEnabled && !opts.TailscaleEnabled
+}
+
 func (opts OptionsConfiguration) IsStunDisabled() bool {
-	return opts.StunKeepaliveMinS < 1 || opts.StunKeepaliveStartS < 1 || !opts.NATEnabled
+	return opts.StunKeepaliveMinS < 1 || opts.StunKeepaliveStartS < 1 || !opts.NATTraversalEnabled()
 }
 
 func (opts OptionsConfiguration) ListenAddresses() []string {
