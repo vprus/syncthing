@@ -173,6 +173,7 @@ type service struct {
 	registry             *registry.Registry
 	keyGen               *protocol.KeyGenerator
 	lanChecker           *lanChecker
+	tailscale            tailscaleTransport
 
 	dialNow           chan struct{}
 	dialNowDevices    map[protocol.DeviceID]struct{}
@@ -183,7 +184,7 @@ type service struct {
 	listenerTokens map[string]suture.ServiceToken
 }
 
-func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *tls.Config, discoverer discover.Finder, bepProtocolName string, tlsDefaultCommonName string, evLogger events.Logger, registry *registry.Registry, keyGen *protocol.KeyGenerator) Service {
+func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *tls.Config, discoverer discover.Finder, bepProtocolName string, tlsDefaultCommonName string, evLogger events.Logger, registry *registry.Registry, keyGen *protocol.KeyGenerator, tailscale tailscaleTransport) Service {
 	spec := svcutil.SpecWithInfoLogger()
 	service := &service{
 		Supervisor:              suture.New("connections.Service", spec),
@@ -204,6 +205,7 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 		registry:             registry,
 		keyGen:               keyGen,
 		lanChecker:           &lanChecker{cfg},
+		tailscale:            tailscale,
 
 		dialNow:        make(chan struct{}, 1),
 		dialNowDevices: make(map[protocol.DeviceID]struct{}),
@@ -516,7 +518,7 @@ func (s *service) bestDialerPriority(cfg config.Configuration) int {
 		if df.Valid(cfg) != nil {
 			continue
 		}
-		prio := df.New(cfg.Options, s.tlsCfg, s.registry, s.lanChecker).Priority("127.0.0.1")
+		prio := df.New(cfg.Options, s.tlsCfg, s.registry, s.lanChecker, s.tailscale).Priority("127.0.0.1")
 		if prio < bestDialerPriority {
 			bestDialerPriority = prio
 		}
@@ -678,7 +680,7 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 			continue
 		}
 
-		dialer := dialerFactory.New(s.cfg.Options(), s.tlsCfg, s.registry, s.lanChecker)
+		dialer := dialerFactory.New(s.cfg.Options(), s.tlsCfg, s.registry, s.lanChecker, s.tailscale)
 		priority := dialer.Priority(uri.Host)
 		currentConns := s.numConnectionsForDevice(deviceCfg.DeviceID)
 		if priority > priorityCutoff {
@@ -799,7 +801,7 @@ func (s *service) createListener(factory listenerFactory, uri *url.URL) bool {
 
 	slog.Debug("Starting listener", "uri", uri)
 
-	listener := factory.New(uri, s.cfg, s.tlsCfg, s.conns, s.natService, s.registry, s.lanChecker)
+	listener := factory.New(uri, s.cfg, s.tlsCfg, s.conns, s.natService, s.registry, s.lanChecker, s.tailscale)
 	listener.OnAddressesChanged(s.logListenAddressesChangedEvent)
 
 	// Retrying a listener many times in rapid succession is unlikely to help,

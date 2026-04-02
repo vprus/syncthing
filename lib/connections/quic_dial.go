@@ -98,7 +98,7 @@ func (d *quicDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL
 
 type quicDialerFactory struct{}
 
-func (quicDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, registry *registry.Registry, lanChecker *lanChecker) genericDialer {
+func (quicDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, registry *registry.Registry, lanChecker *lanChecker, _ tailscaleTransport) genericDialer {
 	return &quicDialer{
 		commonDialer: commonDialer{
 			reconnectInterval: time.Duration(opts.ReconnectIntervalS) * time.Second,
@@ -116,8 +116,10 @@ func (quicDialerFactory) AlwaysWAN() bool {
 	return false
 }
 
-func (quicDialerFactory) Valid(_ config.Configuration) error {
-	// Always valid
+func (quicDialerFactory) Valid(cfg config.Configuration) error {
+	if cfg.Options.TailscaleEnabled {
+		return errDisabled
+	}
 	return nil
 }
 

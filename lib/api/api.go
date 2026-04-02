@@ -86,6 +86,7 @@ type service struct {
 	urService            *ur.Service
 	noUpgrade            bool
 	tlsDefaultCommonName string
+	tailscale            tailscaleTransport
 	configChanged        chan struct{} // signals intentional listener close due to config change
 	started              chan string   // signals startup complete by sending the listener address, for testing only
 	startedOnce          chan struct{} // the service has started successfully at least once
@@ -101,13 +102,19 @@ type service struct {
 
 var _ config.Verifier = &service{}
 
+type tailscaleTransport interface {
+	Enabled() bool
+	Listen(network, addr string) (net.Listener, error)
+	AuthURL() string
+}
+
 type Service interface {
 	suture.Service
 	config.Committer
 	WaitForStart() error
 }
 
-func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog slogutil.Recorder, noUpgrade bool, miscDB *db.Typed) Service {
+func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog slogutil.Recorder, noUpgrade bool, miscDB *db.Typed, tailscale tailscaleTransport) Service {
 	return &service{
 		id:      id,
 		cfg:     cfg,
@@ -126,6 +133,7 @@ func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonNam
 		systemLog:            systemLog,
 		noUpgrade:            noUpgrade,
 		tlsDefaultCommonName: tlsDefaultCommonName,
+		tailscale:            tailscale,
 		configChanged:        make(chan struct{}),
 		startedOnce:          make(chan struct{}),
 		exitChan:             make(chan *svcutil.FatalErr, 1),
@@ -388,6 +396,10 @@ func (s *service) Serve(ctx context.Context) error {
 	// Add the CORS handling
 	handler = corsMiddleware(handler, guiCfg.InsecureAllowFrameLoading)
 
+	// Save the handler before localhost restriction — Tailscale connections
+	// are not from localhost but are still trusted.
+	tailscaleHandler := debugMiddleware(handler)
+
 	if addressIsLocalhost(guiCfg.Address()) && !guiCfg.InsecureSkipHostCheck {
 		// Verify source host
 		handler = localhostMiddleware(handler)
@@ -406,6 +418,34 @@ func (s *service) Serve(ctx context.Context) error {
 	}
 	if shouldDebugHTTP() {
 		srv.ErrorLog = log.Default()
+	}
+
+	// If Tailscale is enabled, also listen on the Tailscale network with the
+	// same port as the GUI address.
+	if s.tailscale != nil && s.tailscale.Enabled() {
+		_, portStr, err := net.SplitHostPort(guiCfg.Address())
+		if err == nil {
+			tsListener, err := s.tailscale.Listen("tcp", net.JoinHostPort("", portStr))
+			if err != nil {
+				slog.WarnContext(ctx, "Failed to start Tailscale GUI listener", slogutil.Error(err))
+			} else {
+				tsSrv := &http.Server{
+					Handler:     tailscaleHandler,
+					ReadTimeout: 15 * time.Second,
+					ErrorLog:    log.New(io.Discard, "", 0),
+				}
+				if shouldDebugHTTP() {
+					tsSrv.ErrorLog = log.Default()
+				}
+				slog.InfoContext(ctx, "GUI and API listening on Tailscale", slogutil.Address(tsListener.Addr()))
+				go func() {
+					<-ctx.Done()
+					_ = tsListener.Close()
+				}()
+				go func() { _ = tsSrv.Serve(tsListener) }()
+				defer tsSrv.Shutdown(context.Background()) //nolint:errcheck
+			}
+		}
 	}
 
 	slog.InfoContext(ctx, "GUI and API listening", slogutil.Address(listener.Addr()))
@@ -1043,7 +1083,7 @@ func (s *service) getSystemStatus(w http.ResponseWriter, _ *http.Request) {
 	res["alloc"] = m.Alloc
 	res["sys"] = m.Sys - m.HeapReleased
 	res["tilde"] = tilde
-	if s.cfg.Options().LocalAnnEnabled || s.cfg.Options().GlobalAnnEnabled {
+	if s.cfg.Options().LocalDiscoveryEnabled() || s.cfg.Options().GlobalDiscoveryEnabled() {
 		res["discoveryEnabled"] = true
 		discoStatus := s.discoverer.ChildErrors()
 		res["discoveryStatus"] = discoveryStatusMap(discoStatus)
@@ -1066,6 +1106,9 @@ func (s *service) getSystemStatus(w http.ResponseWriter, _ *http.Request) {
 	res["startTime"] = ur.StartTime
 	res["guiAddressOverridden"] = s.cfg.GUI().IsOverridden()
 	res["guiAddressUsed"] = s.listenerAddr.String()
+	if s.tailscale != nil {
+		res["tailscaleAuthURL"] = s.tailscale.AuthURL()
+	}
 
 	sendJSON(w, res)
 }

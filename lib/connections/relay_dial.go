@@ -71,7 +71,7 @@ func (d *relayDialer) Priority(_ string) int {
 
 type relayDialerFactory struct{}
 
-func (relayDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, _ *registry.Registry, _ *lanChecker) genericDialer {
+func (relayDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, _ *registry.Registry, _ *lanChecker, _ tailscaleTransport) genericDialer {
 	return &relayDialer{commonDialer{
 		trafficClass:      opts.TrafficClass,
 		reconnectInterval: time.Duration(opts.RelayReconnectIntervalM) * time.Minute,
@@ -86,7 +86,7 @@ func (relayDialerFactory) AlwaysWAN() bool {
 }
 
 func (relayDialerFactory) Valid(cfg config.Configuration) error {
-	if !cfg.Options.RelaysEnabled {
+	if !cfg.Options.RelayTransportEnabled() {
 		return errDisabled
 	}
 	return nil

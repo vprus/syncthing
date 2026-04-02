@@ -9,6 +9,7 @@ package connections
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/url"
 	"time"
 
@@ -28,7 +29,8 @@ func init() {
 type tcpDialer struct {
 	commonDialer
 
-	registry *registry.Registry
+	registry  *registry.Registry
+	tailscale tailscaleTransport
 }
 
 func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL) (internalConn, error) {
@@ -36,19 +38,27 @@ func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn, err := dialer.DialContextReusePortFunc(d.registry)(timeoutCtx, uri.Scheme, uri.Host)
+	var conn net.Conn
+	var err error
+	if d.tailscale != nil && d.tailscale.Enabled() {
+		conn, err = d.tailscale.Dial(timeoutCtx, uri.Scheme, uri.Host)
+	} else {
+		conn, err = dialer.DialContextReusePortFunc(d.registry)(timeoutCtx, uri.Scheme, uri.Host)
+	}
 	if err != nil {
 		return internalConn{}, err
 	}
 
-	err = dialer.SetTCPOptions(conn)
-	if err != nil {
-		l.Debugln("Dial (BEP/tcp): setting tcp options:", err)
-	}
+	if d.tailscale == nil || !d.tailscale.Enabled() {
+		err = dialer.SetTCPOptions(conn)
+		if err != nil {
+			l.Debugln("Dial (BEP/tcp): setting tcp options:", err)
+		}
 
-	err = dialer.SetTrafficClass(conn, d.trafficClass)
-	if err != nil {
-		l.Debugln("Dial (BEP/tcp): setting traffic class:", err)
+		err = dialer.SetTrafficClass(conn, d.trafficClass)
+		if err != nil {
+			l.Debugln("Dial (BEP/tcp): setting traffic class:", err)
+		}
 	}
 
 	tc := tls.Client(conn, d.tlsCfg)
@@ -69,7 +79,7 @@ func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL)
 
 type tcpDialerFactory struct{}
 
-func (tcpDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, registry *registry.Registry, lanChecker *lanChecker) genericDialer {
+func (tcpDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config, registry *registry.Registry, lanChecker *lanChecker, tailscale tailscaleTransport) genericDialer {
 	return &tcpDialer{
 		commonDialer: commonDialer{
 			trafficClass:      opts.TrafficClass,
@@ -80,7 +90,8 @@ func (tcpDialerFactory) New(opts config.OptionsConfiguration, tlsCfg *tls.Config
 			wanPriority:       opts.ConnectionPriorityTCPWAN,
 			allowsMultiConns:  true,
 		},
-		registry: registry,
+		registry:  registry,
+		tailscale: tailscale,
 	}
 }
 

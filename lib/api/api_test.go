@@ -90,7 +90,7 @@ func TestStopAfterBrokenConfig(t *testing.T) {
 		mdb.Close()
 	})
 	kdb := db.NewMiscDB(mdb)
-	srv := New(protocol.LocalDeviceID, w, "", "syncthing", nil, nil, nil, events.NoopLogger, nil, nil, nil, nil, nil, nil, false, kdb).(*service)
+	srv := New(protocol.LocalDeviceID, w, "", "syncthing", nil, nil, nil, events.NoopLogger, nil, nil, nil, nil, nil, nil, false, kdb, nil).(*service)
 
 	srv.started = make(chan string)
 
@@ -1057,7 +1057,7 @@ func startHTTPWithShutdownTimeout(t *testing.T, cfg config.Wrapper, shutdownTime
 		mdb.Close()
 	})
 	kdb := db.NewMiscDB(mdb)
-	svc := New(protocol.LocalDeviceID, cfg, assetDir, "syncthing", m, eventSub, diskEventSub, events.NoopLogger, discoverer, connections, urService, mockedSummary, errorLog, systemLog, false, kdb).(*service)
+	svc := New(protocol.LocalDeviceID, cfg, assetDir, "syncthing", m, eventSub, diskEventSub, events.NoopLogger, discoverer, connections, urService, mockedSummary, errorLog, systemLog, false, kdb, nil).(*service)
 	svc.started = addrChan
 
 	if shutdownTimeout > 0 {
@@ -1575,7 +1575,7 @@ func TestEventMasks(t *testing.T) {
 		mdb.Close()
 	})
 	kdb := db.NewMiscDB(mdb)
-	svc := New(protocol.LocalDeviceID, cfg, "", "syncthing", nil, defSub, diskSub, events.NoopLogger, nil, nil, nil, nil, nil, nil, false, kdb).(*service)
+	svc := New(protocol.LocalDeviceID, cfg, "", "syncthing", nil, defSub, diskSub, events.NoopLogger, nil, nil, nil, nil, nil, nil, false, kdb, nil).(*service)
 
 	if mask := svc.getEventMask(""); mask != DefaultEventMask {
 		t.Errorf("incorrect default mask %x != %x", int64(mask), int64(DefaultEventMask))

@@ -134,6 +134,18 @@ func maybeReplacePort(uri *url.URL, laddr net.Addr) *url.URL {
 	return &uriCopy
 }
 
+func uriPort(uri *url.URL) (int, bool) {
+	_, portStr, err := net.SplitHostPort(uri.Host)
+	if err != nil {
+		return 0, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
+}
+
 func portMappingURIs(mapping *nat.Mapping, listener_uri url.URL) []*url.URL {
 	var uris []*url.URL
 	if mapping != nil {

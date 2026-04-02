@@ -248,11 +248,14 @@ func (t *quicListener) NATType() string {
 
 type quicListenerFactory struct{}
 
-func (*quicListenerFactory) Valid(config.Configuration) error {
+func (*quicListenerFactory) Valid(cfg config.Configuration) error {
+	if cfg.Options.TailscaleEnabled {
+		return errDisabled
+	}
 	return nil
 }
 
-func (f *quicListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, natService *nat.Service, registry *registry.Registry, lanChecker *lanChecker) genericListener {
+func (f *quicListenerFactory) New(uri *url.URL, cfg config.Wrapper, tlsCfg *tls.Config, conns chan internalConn, natService *nat.Service, registry *registry.Registry, lanChecker *lanChecker, _ tailscaleTransport) genericListener {
 	l := &quicListener{
 		uri:        fixupPort(uri, config.DefaultQUICPort),
 		cfg:        cfg,
