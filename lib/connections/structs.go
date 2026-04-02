@@ -207,6 +207,7 @@ type tailscaleTransport interface {
 	Dial(context.Context, string, string) (net.Conn, error)
 	Listen(string, string) (net.Listener, error)
 	AdvertiseURLs(string, int) []*url.URL
+	AuthURL() string
 }
 
 type ListenerAddresses struct {

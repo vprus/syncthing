@@ -281,6 +281,19 @@
 
       </div>
 
+      <!-- Panel: Tailscale auth required -->
+
+      <div ng-if="system.tailscaleAuthURL" class="row">
+        <div class="col-md-12">
+          <div class="panel panel-danger">
+            <div class="panel-body">
+              <span class="fas fa-lock"></span>&nbsp;
+              <span translate>Please authorise Tailscale connection at</span>&nbsp;<a ng-href="{{system.tailscaleAuthURL}}" target="_blank">{{system.tailscaleAuthURL}}</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Panel: Notice -->
 
       <div ng-if="errorList().length > 0" class="row">

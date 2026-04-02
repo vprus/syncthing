@@ -103,6 +103,28 @@ func (s *Service) AdvertiseURLs(scheme string, port int) []*url.URL {
 	return urls
 }
 
+// AuthURL returns the Tailscale auth URL if the node is waiting for
+// authorisation, or an empty string if already running. tsnet uses an
+// in-process, in-memory local API (no daemon, no network round-trip), so
+// calling Status on every GUI poll is cheap and there is no need to cache.
+func (s *Service) AuthURL() string {
+	server, err := s.get()
+	if err != nil {
+		return ""
+	}
+	lc, err := server.LocalClient()
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	status, err := lc.Status(ctx)
+	if err != nil {
+		return ""
+	}
+	return status.AuthURL
+}
+
 func (s *Service) Serve(ctx context.Context) error {
 	<-ctx.Done()
 	return s.Close()

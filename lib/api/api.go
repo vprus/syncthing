@@ -105,6 +105,7 @@ var _ config.Verifier = &service{}
 type tailscaleTransport interface {
 	Enabled() bool
 	Listen(network, addr string) (net.Listener, error)
+	AuthURL() string
 }
 
 type Service interface {
@@ -1105,6 +1106,9 @@ func (s *service) getSystemStatus(w http.ResponseWriter, _ *http.Request) {
 	res["startTime"] = ur.StartTime
 	res["guiAddressOverridden"] = s.cfg.GUI().IsOverridden()
 	res["guiAddressUsed"] = s.listenerAddr.String()
+	if s.tailscale != nil {
+		res["tailscaleAuthURL"] = s.tailscale.AuthURL()
+	}
 
 	sendJSON(w, res)
 }
