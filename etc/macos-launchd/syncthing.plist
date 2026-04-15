@@ -1,42 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	Make sure the "syncthing" executable is located at ~/bin/syncthing.
-	Replace the string "USERNAME" in this file with your username, such as "jb".
-	Copy this file to ~/Library/LaunchAgents/syncthing.plist.
-	Execute "launchctl load ~/Library/LaunchAgents/syncthing.plist".
+	Reference template — the install.sh script generates this automatically.
+
+	For manual setup, replace USERNAME with your macOS username (e.g. "jb"),
+	copy to ~/Library/LaunchAgents/syncthing.plist, and run:
+
+	    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/syncthing.plist
 -->
 <plist version="1.0">
-	<dict>
-		<key>Label</key>
-		<string>net.syncthing.syncthing</string>
+<dict>
+	<key>Label</key>
+	<string>net.syncthing.syncthing</string>
 
-		<key>ProgramArguments</key>
-		<array>
-			<string>/Users/USERNAME/bin/syncthing</string>
-		</array>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/USERNAME/local/bin/syncthing</string>
+		<string>--no-browser</string>
+		<string>--no-restart</string>
+	</array>
 
-		<key>EnvironmentVariables</key>
-		<dict>
-			<key>HOME</key>
-			<string>/Users/USERNAME</string>
-			<key>STNORESTART</key>
-			<string>1</string>
-		</dict>
+	<key>KeepAlive</key>
+	<true/>
 
-		<key>KeepAlive</key>
-		<true/>
+	<key>LowPriorityIO</key>
+	<true/>
 
-		<key>LowPriorityIO</key>
-		<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
 
-		<key>ProcessType</key>
-		<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/Users/USERNAME/Library/Logs/Syncthing.log</string>
 
-		<key>StandardOutPath</key>
-		<string>/Users/USERNAME/Library/Logs/Syncthing.log</string>
-
-		<key>StandardErrorPath</key>
-		<string>/Users/USERNAME/Library/Logs/Syncthing-Errors.log</string>
-	</dict>
+	<key>StandardErrorPath</key>
+	<string>/Users/USERNAME/Library/Logs/Syncthing-Errors.log</string>
+</dict>
 </plist>
