@@ -13,6 +13,7 @@ This will:
 - Install the binary to `~/local/bin/syncthing`
 - Install a LaunchAgent plist to `~/Library/LaunchAgents/`
 - Start the service immediately
+- Pass `--no-upgrade` so the installed binary is not replaced automatically
 
 Options:
 

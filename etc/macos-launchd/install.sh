@@ -108,6 +108,7 @@ generate_plist() {
         <string>${BINDIR}/syncthing</string>
         <string>--no-browser</string>
         <string>--no-restart</string>
+        <string>--no-upgrade</string>
     </array>
 
     <key>KeepAlive</key>
